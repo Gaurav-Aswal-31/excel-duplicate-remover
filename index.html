@@ -1,9 +1,11 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Excel Duplicate Remover</title>
+    <link rel="icon" href="data:,">
 
     <style>
         body {
@@ -59,6 +61,10 @@
             cursor: pointer;
         }
 
+        button:hover:not(:disabled) {
+            background: #166534;
+        }
+
         button:disabled {
             opacity: 0.6;
             cursor: wait;
@@ -67,6 +73,7 @@
         #status {
             margin-top: 20px;
             overflow-wrap: anywhere;
+            white-space: pre-wrap;
         }
 
         .note {
@@ -100,15 +107,17 @@
             </select>
 
             <button id="submitButton" type="submit">
-                Remove Duplicates & Download
+                Remove Duplicates &amp; Download
             </button>
         </form>
 
         <p class="note">
             The first occurrence of each selected-column value is kept.
+            Rows with the same selected-column value are removed after
+            the first occurrence.
         </p>
 
-        <div id="status" role="status"></div>
+        <div id="status" role="status" aria-live="polite"></div>
     </main>
 
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
@@ -129,11 +138,19 @@
             statusBox.textContent = "";
 
             const file = fileInput.files[0];
-            if (!file) return;
+
+            if (!file) {
+                columnSelect.innerHTML =
+                    '<option value="">Upload a file first</option>';
+                return;
+            }
 
             if (!file.name.toLowerCase().endsWith(".xlsx")) {
-                statusBox.textContent = "Please choose an .xlsx file.";
+                statusBox.textContent =
+                    "Please choose a valid .xlsx Excel file.";
                 fileInput.value = "";
+                columnSelect.innerHTML =
+                    '<option value="">Upload a file first</option>';
                 return;
             }
 
@@ -145,31 +162,51 @@
                     { type: "array" }
                 );
 
-                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                if (!workbook.SheetNames.length) {
+                    throw new Error("No worksheet found in this file.");
+                }
+
+                const firstSheet =
+                    workbook.Sheets[workbook.SheetNames[0]];
+
                 const rows = XLSX.utils.sheet_to_json(
                     firstSheet,
                     { header: 1, defval: "" }
                 );
 
                 if (!rows.length || !rows[0].length) {
-                    throw new Error("The Excel file has no column headers.");
+                    throw new Error(
+                        "The Excel file has no column headers."
+                    );
                 }
 
-                headers = rows[0].map(value => String(value).trim());
+                headers = rows[0].map(
+                    value => String(value).trim()
+                );
 
                 headers.forEach((header, index) => {
                     const option = document.createElement("option");
-                    option.value = header;
-                    option.textContent = header || `Column ${index + 1}`;
+
+                    // Use the column index so duplicate header names
+                    // can still be selected separately.
+                    option.value = String(index);
+                    option.textContent =
+                        header || `Column ${index + 1}`;
+
                     columnSelect.appendChild(option);
                 });
 
                 columnSelect.disabled = false;
+
                 statusBox.textContent =
-                    `File selected: ${file.name}. Choose a column.`;
+                    `File selected: ${file.name}\n` +
+                    "Choose a column to check for duplicates.";
 
             } catch (error) {
-                statusBox.textContent = error.message;
+                statusBox.textContent =
+                    "Error reading Excel file: " + error.message;
+
+                columnSelect.disabled = true;
             }
         });
 
@@ -177,17 +214,20 @@
             event.preventDefault();
 
             const file = fileInput.files[0];
-            const column = columnSelect.value;
+            const columnIndex = columnSelect.value;
 
-            if (!file || !column) {
+            if (!file || columnIndex === "") {
                 statusBox.textContent =
                     "Please select an Excel file and a column.";
                 return;
             }
 
             const formData = new FormData();
+
             formData.append("file", file);
-            formData.append("column", column);
+
+            // Send the selected column index to the backend.
+            formData.append("column", headers[Number(columnIndex)]);
 
             submitButton.disabled = true;
             statusBox.textContent = "Processing your Excel file...";
@@ -199,26 +239,46 @@
                 });
 
                 if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.error || "Processing failed.");
+                    let errorMessage =
+                        `Request failed (${response.status}).`;
+
+                    try {
+                        const error = await response.json();
+                        errorMessage = error.error || errorMessage;
+                    } catch (_) {
+                        // The server did not return JSON.
+                    }
+
+                    throw new Error(errorMessage);
                 }
 
                 const blob = await response.blob();
-                const removed = response.headers.get("X-Rows-Removed");
+
+                const removed =
+                    response.headers.get("X-Rows-Removed");
 
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement("a");
+
                 link.href = url;
                 link.download = "cleaned_excel.xlsx";
+
+                document.body.appendChild(link);
                 link.click();
-                URL.revokeObjectURL(url);
+                link.remove();
+
+                // Allow the browser to start downloading first.
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
 
                 statusBox.textContent =
-                    `Success! Removed ${removed ?? "some"} duplicate rows. ` +
+                    `Success! Removed ${removed ?? "unknown"} ` +
+                    "duplicate rows.\n" +
                     "Your cleaned Excel file has been downloaded.";
 
             } catch (error) {
-                statusBox.textContent = "Error: " + error.message;
+                statusBox.textContent =
+                    "Error: " + error.message +
+                    "\nPlease check that your Vercel API is configured correctly.";
             } finally {
                 submitButton.disabled = false;
             }
