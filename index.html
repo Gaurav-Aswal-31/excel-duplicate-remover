@@ -1,0 +1,230 @@
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel Duplicate Remover</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            margin: 0;
+            padding: 30px 15px;
+            color: #1e293b;
+        }
+
+        .container {
+            max-width: 650px;
+            margin: 30px auto;
+            background: white;
+            padding: 30px;
+            border-radius: 14px;
+            box-shadow: 0 5px 25px #00000012;
+        }
+
+        h1 {
+            text-align: center;
+            color: #166534;
+        }
+
+        p {
+            line-height: 1.6;
+        }
+
+        label {
+            display: block;
+            margin: 20px 0 8px;
+            font-weight: bold;
+        }
+
+        input, select, button {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 12px;
+            border-radius: 7px;
+            font-size: 16px;
+        }
+
+        input, select {
+            border: 1px solid #cbd5e1;
+            background: white;
+        }
+
+        button {
+            margin-top: 22px;
+            border: none;
+            background: #15803d;
+            color: white;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: wait;
+        }
+
+        #status {
+            margin-top: 20px;
+            overflow-wrap: anywhere;
+        }
+
+        .note {
+            color: #64748b;
+            font-size: 14px;
+        }
+    </style>
+</head>
+
+<body>
+    <main class="container">
+        <h1>📊 Excel Duplicate Remover</h1>
+
+        <p>
+            Upload your Excel file, choose the column to check,
+            and download the cleaned file.
+        </p>
+
+        <form id="uploadForm">
+            <label for="file">Choose Excel file (.xlsx)</label>
+            <input
+                type="file"
+                id="file"
+                accept=".xlsx"
+                required
+            >
+
+            <label for="column">Column to check for duplicates</label>
+            <select id="column" required disabled>
+                <option value="">Upload a file first</option>
+            </select>
+
+            <button id="submitButton" type="submit">
+                Remove Duplicates & Download
+            </button>
+        </form>
+
+        <p class="note">
+            The first occurrence of each selected-column value is kept.
+        </p>
+
+        <div id="status" role="status"></div>
+    </main>
+
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+
+    <script>
+        const fileInput = document.getElementById("file");
+        const columnSelect = document.getElementById("column");
+        const form = document.getElementById("uploadForm");
+        const statusBox = document.getElementById("status");
+        const submitButton = document.getElementById("submitButton");
+
+        let headers = [];
+
+        fileInput.addEventListener("change", async () => {
+            headers = [];
+            columnSelect.innerHTML = "";
+            columnSelect.disabled = true;
+            statusBox.textContent = "";
+
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            if (!file.name.toLowerCase().endsWith(".xlsx")) {
+                statusBox.textContent = "Please choose an .xlsx file.";
+                fileInput.value = "";
+                return;
+            }
+
+            statusBox.textContent = "Reading Excel columns...";
+
+            try {
+                const workbook = XLSX.read(
+                    await file.arrayBuffer(),
+                    { type: "array" }
+                );
+
+                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                const rows = XLSX.utils.sheet_to_json(
+                    firstSheet,
+                    { header: 1, defval: "" }
+                );
+
+                if (!rows.length || !rows[0].length) {
+                    throw new Error("The Excel file has no column headers.");
+                }
+
+                headers = rows[0].map(value => String(value).trim());
+
+                headers.forEach((header, index) => {
+                    const option = document.createElement("option");
+                    option.value = header;
+                    option.textContent = header || `Column ${index + 1}`;
+                    columnSelect.appendChild(option);
+                });
+
+                columnSelect.disabled = false;
+                statusBox.textContent =
+                    `File selected: ${file.name}. Choose a column.`;
+
+            } catch (error) {
+                statusBox.textContent = error.message;
+            }
+        });
+
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+
+            const file = fileInput.files[0];
+            const column = columnSelect.value;
+
+            if (!file || !column) {
+                statusBox.textContent =
+                    "Please select an Excel file and a column.";
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append("file", file);
+            formData.append("column", column);
+
+            submitButton.disabled = true;
+            statusBox.textContent = "Processing your Excel file...";
+
+            try {
+                const response = await fetch("/api", {
+                    method: "POST",
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || "Processing failed.");
+                }
+
+                const blob = await response.blob();
+                const removed = response.headers.get("X-Rows-Removed");
+
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = "cleaned_excel.xlsx";
+                link.click();
+                URL.revokeObjectURL(url);
+
+                statusBox.textContent =
+                    `Success! Removed ${removed ?? "some"} duplicate rows. ` +
+                    "Your cleaned Excel file has been downloaded.";
+
+            } catch (error) {
+                statusBox.textContent = "Error: " + error.message;
+            } finally {
+                submitButton.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
+```
